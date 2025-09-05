@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NeoBank — минималистичный фейк-банк</title>
+
+  <!-- QR library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+
+  <style>
+    /*
+      NeoBank — single-file SPA (обновлено)
+      Изменения:
+      1) Обязательная регистрация при первом открытии (email, телефон, ФИО)
+      2) После регистрации генерируются ID и номер карты
+      3) Полный редизайн банковской карты
+      4) Магазин баллов открывается в отдельном оверлее поверх приложения
+      5) Вкладки Pay/Points/Topup/History/Profile — открываются теперь как оверлеи
+    */
+
+    /* ===== CSS VARIABLES / THEMING ===== */
+    :root {
+      --bg: #0b0c10;
+      --panel: #12141a;
+      --text: #e7eaf1;
+      --muted: #9aa3b2;
+      --primary: #7c5cff;
+      --primary-2: #00d4ff;
+      --accent: #232632;
+      --ok: #1fd67a;
+      --warn: #ffb020;
+      --err: #ff5c5c;
+      --shadow: 0 10px 24px rgba(0,0,0,.25), 0 6px 10px rgba(0,0,0,.15);
+      --radius: 18px;
+      --trans: .22s cubic-bezier(.2,.7,.2,1);
+    }
+
+    /* Светлая тема */
+    .theme-light {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #5b6475;
+      --primary: #6b5cff;
+      --primary-2: #2bd3ff;
+      --accent: #eef2f7;
+      --shadow: 0 10px 24px rgba(17,24,39,.08), 0 6px 10px rgba(17,24,39,.06);
+    }
+    /* Зелёная тема */
+    .theme-green { --primary: #12cc7b; --primary-2: #50e3a4; --accent: #0f2c24; }
+    /* Фиолетовая тема */
+    .theme-purple { --primary: #8d5cff; --primary-2: #ff6bd6; --accent: #23142e; }
+
+    /* ===== BASE ===== */
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Inter, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      transition: background var(--trans), color var(--trans);
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px clamp(16px, 3vw, 28px);
+      display: grid;
+      gap: 22px;
+    }
+
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, var(--primary), var(--primary-2)); box-shadow: var(--shadow); }
+    h1 { font-size: clamp(20px, 2.4vw, 28px); margin: 0; letter-spacing: .2px; }
+
+    .header-actions { display: flex; gap: 10px; align-items: center; }
+    .theme-select, .btn {
+      border: 0; outline: 0; border-radius: 12px;
+      padding: 10px 14px; background: var(--panel); color: var(--text);
+      box-shadow: var(--shadow);
+      transition: transform var(--trans), background var(--trans), opacity var(--trans), box-shadow var(--trans);
+    }
+    .btn:hover, .theme-select:hover { transform: translateY(-2px); }
+    .btn:active { transform: translateY(0); opacity: .9; }
+    .btn-primary { background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #0b0c10; font-weight: 800; }
+    .btn-ghost { background: var(--accent); }
+
+    /* ===== SUMMARY ===== */
+    .summary { display: grid; grid-template-columns: 1.4fr .8fr; gap: 22px; }
+    @media (max-width: 900px) { .summary { grid-template-columns: 1fr; } }
+
+    /* ===== NEW CARD DESIGN (full redesign) ===== */
+    .bank-card {
+      position: relative; overflow: hidden; border-radius: 22px; padding: 24px 22px; min-height: 230px;
+      color: #eaf0ff; display: grid; align-content: space-between; box-shadow: var(--shadow); isolation: isolate;
+      background: linear-gradient(160deg, #0f1117 0%, #171a23 60%, #0f1117 100%);
+      border: 1px solid rgba(255,255,255,.06);
+    }
+    /* неоновая рамка */
+    .bank-card::before {
+      content: ""; position: absolute; inset: -2px; border-radius: 24px; padding: 1.2px;
+      background: conic-gradient(from 120deg, var(--primary), var(--primary-2), var(--primary));
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor; mask-composite: exclude; z-index: -1;
+    }
+    /* декоративный паттерн */
+    .bank-card::after {
+      content: ""; position: absolute; width: 280px; height: 280px; right: -60px; top: -60px; border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(124,92,255,.35), rgba(43,211,255,.15) 60%, transparent 70%);
+      filter: blur(8px); opacity: .8; z-index: 0;
+    }
+    .card-top { display: flex; justify-content: space-between; align-items: start; z-index: 1; }
+    .chip { width: 46px; height: 34px; border-radius: 8px; background: linear-gradient(180deg,#d4d4d4,#9f9f9f); box-shadow: inset 0 1px 0 rgba(255,255,255,.6), inset 0 -1px 0 rgba(0,0,0,.25); }
+    .holo { width: 42px; height: 42px; border-radius: 50%; background: conic-gradient(from 45deg, #ff7ee7, #7df, #8eff7a, #ff7ee7); filter: saturate(1.2) blur(.2px); opacity: .9; mix-blend-mode: screen; }
+    .card-badge { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; opacity: .9; background: rgba(255,255,255,.06); padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.08); }
+
+    .card-number { font-size: clamp(20px, 2.8vw, 26px); letter-spacing: 2.4px; font-weight: 800; text-shadow: 0 1px 0 rgba(255,255,255,.06); z-index: 1; }
+    .card-meta { display: flex; gap: 18px; opacity: .9; font-size: 14px; align-items: center; }
+    .meta-row { display: flex; justify-content: space-between; align-items: end; gap: 14px; z-index: 1; }
+    .owner { font-weight: 700; letter-spacing: .8px; }
+    .valid { color: #b9c2d3; }
+
+    /* ===== QUICK STATS ===== */
+    .quick-stats { background: var(--panel); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); display: grid; gap: 14px; align-content: start; }
+    .stat { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(0,0,0,.03)); border-radius: 14px; border: 1px solid rgba(255,255,255,.04); }
+    .stat .label { color: var(--muted); font-size: 14px; }
+    .stat .value { font-weight: 700; }
+
+    /* ===== NAV CARDS ===== */
+    .nav-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+    @media (max-width: 900px) { .nav-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 540px) { .nav-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    .nav-card { cursor: pointer; padding: 18px; border-radius: 16px; background: var(--panel); box-shadow: var(--shadow);
+      display: grid; gap: 8px; align-content: center; justify-items: start; min-height: 94px; position: relative;
+      overflow: hidden; transition: transform var(--trans), background var(--trans), box-shadow var(--trans);
+    }
+    .nav-card:hover { transform: translateY(-4px); }
+    .nav-icon { width: 28px; height: 28px; opacity: .95; }
+    .nav-title { font-weight: 700; }
+
+    /* ===== PAGES ===== */
+    .page { display: none; }
+    .page.active { display: grid; gap: 18px; }
+
+    .panel { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; }
+
+    form .row { display: grid; gap: 10px; margin-bottom: 12px; }
+    input[type="number"], input[type="text"], input[type="email"], input[type="tel"], select {
+      width: 100%; border: 1px solid rgba(255,255,255,.08); background: var(--accent); color: var(--text);
+      border-radius: 12px; padding: 12px 14px; font-size: 16px; outline: none; transition: border var(--trans), box-shadow var(--trans);
+    }
+    input::placeholder { color: var(--muted); }
+    input:focus, select:focus { border-color: var(--primary-2); box-shadow: 0 0 0 3px rgba(0,212,255,.15); }
+
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    /* History table */
+    .table { width: 100%; border-collapse: collapse; }
+    .table th, .table td { text-align: left; padding: 12px 10px; border-bottom: 1px dashed rgba(255,255,255,.08); }
+    .table th { color: var(--muted); font-weight: 600; }
+
+    /* Shop */
+    .shop-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    @media (max-width: 1024px){ .shop-grid { grid-template-columns: repeat(3, 1fr);} }
+    @media (max-width: 760px){ .shop-grid { grid-template-columns: repeat(2, 1fr);} }
+    @media (max-width: 480px){ .shop-grid { grid-template-columns: 1fr; } }
+    .product { background: var(--panel); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; display: grid; gap: 10px; padding: 14px; transition: transform var(--trans); }
+    .product:hover { transform: translateY(-3px); }
+    .product .thumb { height: 120px; border-radius: 12px; background: linear-gradient(135deg, #222, var(--accent)); display: grid; place-items: center; font-weight: 800; opacity: .9; }
+    .product .meta { display: flex; justify-content: space-between; align-items: center; }
+
+    /* ===== MODAL / OVERLAY (онбординг + магазин + страницы) ===== */
+    .modal-overlay { position: fixed; inset: 0; backdrop-filter: blur(10px); background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; padding: 18px; z-index: 9998; }
+    .modal-overlay.show { display: flex; }
+    .modal-dialog { width: min(920px, 96vw); background: var(--panel); border-radius: 22px; box-shadow: var(--shadow); padding: 18px; position: relative; border: 1px solid rgba(255,255,255,.06); }
+    .modal-dialog.lg { width: min(1100px, 98vw); }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .modal-title { font-size: 20px; font-weight: 800; }
+    .modal-close { border: 0; background: var(--accent); color: var(--text); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+
+    /* Toasts */
+    .toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 10px; z-index: 9999; }
+    .toast { background: var(--panel); color: var(--text); border-left: 6px solid var(--ok); padding: 12px 14px; border-radius: 14px; box-shadow: var(--shadow); animation: slideIn .4s ease-out; }
+    .toast.warn{ border-left-color: var(--warn); }
+    .toast.err{ border-left-color: var(--err); }
+    @keyframes slideIn { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    footer { color: var(--muted); font-size: 13px; text-align: center; padding: 16px 0 32px; }
+
+    /* ======================= ДОБАВЛЕНО: Плавные модалки и подсветка баланса ======================= */
+    /* NEW: плавное появление/исчезновение всех модальных оверлеев с затемнением фона */
+    .modal-overlay { /* переопределяем только визуальные аспекты, логика JS не тронута */
+      display: flex;                 /* держим флекс-контейнер всегда, но скрываем через visibility/opacity */
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity var(--trans), visibility var(--trans);
+    }
+    .modal-overlay.show {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    .modal-overlay .modal-dialog { /* NEW: лёгкий слайд и fade у диалога */
+      transform: translateY(12px);
+      opacity: 0;
+      transition: transform var(--trans), opacity var(--trans);
+    }
+    .modal-overlay.show .modal-dialog {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    /* NEW: краткая красная подсветка значения баланса при успешном списании средств */
+    @keyframes nb-balance-flash-red {
+      0% { color: var(--text); }
+      20% { color: var(--err); }
+      80% { color: var(--err); }
+      100% { color: var(--text); }
+    }
+    .balance-flash-red { animation: nb-balance-flash-red 1.2s ease; }
+    /* ======================= /ДОБАВЛЕНО ======================= */
+  </style>
+</head>
+<body>
+  <div id="app" class="container">
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <h1>NeoBank</h1>
+      </div>
+      <div class="header-actions">
+        <select id="themeSelect" class="theme-select" aria-label="Смена темы">
+          <option value="default">Тема: Тёмная</option>
+          <option value="light">Тема: Светлая</option>
+          <option value="green">Тема: Зелёная</option>
+          <option value="purple">Тема: Фиолетовая</option>
+        </select>
+        <button class="btn btn-ghost" data-route="profile">Профиль</button>
+      </div>
+    </header>
+
+    <!-- SUMMARY: Card + quick stats -->
+    <section class="summary">
+      <article class="bank-card" aria-label="Банковская карта">
+        <div class="card-top">
+          <div class="chip" aria-hidden="true"></div>
+          <div class="card-badge">virtual • debit</div>
+          <div class="holo" aria-hidden="true"></div>
+        </div>
+        <div class="card-number" id="cardNumber">5282  3421  9012  3456</div>
+        <div class="meta-row">
+          <div class="card-meta"><span class="owner" id="cardOwner">Neo User</span></div>
+          <div class="card-meta"><span class="valid" id="validThru">VALID THRU 12/29</span> <span>NeoBank • World</span></div>
+        </div>
+      </article>
+
+      <aside class="quick-stats">
+        <div class="stat">
+          <div>
+            <div class="label">Баланс</div>
+            <div class="value" id="balanceView">0 ₽</div>
+          </div>
+          <button class="btn btn-primary" data-route="topup">Пополнить</button>
+        </div>
+        <div class="stat">
+          <div>
+            <div class="label">Баллы</div>
+            <div class="value" id="pointsView">0</div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost" data-route="points">Управлять</button>
+            <button class="btn btn-primary" data-route="shop">Магазин</button>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- NAVIGATION BLOCKS -->
+    <nav class="nav-grid" aria-label="Навигация">
+      <div class="nav-card" data-route="pay">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18M3 10h18M7 15h1m3 0h6"/><rect x="3" y="5" width="18" height="14" rx="4"/></svg>
+        <div class="nav-title">Оплатить</div>
+        <div class="nav-desc">Списать сумму и начислить 5% баллами</div>
+      </div>
+      <div class="nav-card" data-route="topup">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 19V5"/><path d="M5 12h14"/></svg>
+        <div class="nav-title">Пополнить</div>
+        <div class="nav-desc">Мгновенное пополнение баланса</div>
+      </div>
+      <div class="nav-card" data-route="history">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></svg>
+        <div class="nav-title">История</div>
+        <div class="nav-desc">Все последние операции</div>
+      </div>
+      <div class="nav-card" data-route="shop">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6h12l1 4H5l1-4Z"/><path d="M6 10v7a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-7"/></svg>
+        <div class="nav-title">Магазин баллов</div>
+        <div class="nav-desc">Обменяй баллы на товары</div>
+      </div>
+      <div class="nav-card" data-route="profile">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0 1 16 0"/></svg>
+        <div class="nav-title">Профиль</div>
+        <div class="nav-desc">Данные, темы, настройки</div>
+      </div>
+    </nav>
+
+    <!-- PAGES (как раньше; магазин теперь открывается в оверлее) -->
+    <section id="page-pay" class="page panel" aria-labelledby="payTitle">
+      <h2 id="payTitle">Оплата</h2>
+      <form id="payForm">
+        <div class="row">
+          <label for="payAmount">Сумма оплаты (₽)</label>
+          <input id="payAmount" type="number" min="1" step="1" placeholder="Например, 1200" required />
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Оплатить</button>
+          <button class="btn btn-ghost" type="reset">Сброс</button>
+        </div>
+        <p class="hint" style="color:var(--muted); margin:8px 0 0">За каждую оплату начисляется <b>5%</b> от суммы в баллах.</p>
+      </form>
+    </section>
+
+    <section id="page-points" class="page panel" aria-labelledby="pointsTitle">
+      <h2 id="pointsTitle">Баллы</h2>
+      <div class="row">
+        <div>Текущие баллы: <b id="pointsView2">0</b></div>
+      </div>
+      <form id="exchangeForm">
+        <div class="row">
+          <label for="exchangeAmount">Обменять баллы на деньги</label>
+          <input id="exchangeAmount" type="number" min="1" step="1" placeholder="Сколько баллов обменять" />
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Обменять</button>
+          <button class="btn btn-ghost" type="button" id="exchangeAll">Обменять всё</button>
+        </div>
+        <p class="hint" style="color:var(--muted); margin:8px 0 0">Курс: <b>1 балл = 1 ₽</b>.</p>
+      </form>
+    </section>
+
+    <section id="page-topup" class="page panel" aria-labelledby="topupTitle">
+      <h2 id="topupTitle">Пополнение</h2>
+      <form id="topupForm">
+        <div class="row">
+          <label for="topupAmount">Сумма пополнения (₽)</label>
+          <input id="topupAmount" type="number" min="1" step="1" placeholder="Например, 3000" required />
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Пополнить</button>
+          <button class="btn btn-ghost" type="reset">Сброс</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="page-history" class="page panel" aria-labelledby="historyTitle">
+      <h2 id="historyTitle">История транзакций</h2>
+      <div class="table-wrap">
+        <table class="table" aria-describedby="historyTitle">
+          <thead>
+            <tr><th>Дата</th><th>Операция</th><th>Сумма</th><th>Баллы</th></tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Секция магазина в разметке остаётся (для совместимости), но открывается как модал -->
+    <section id="page-shop" class="page" aria-labelledby="shopTitle">
+      <div class="panel">
+        <h2 id="shopTitle">Магазин баллов</h2>
+        <p style="color:var(--muted); margin-top:-4px">Обменивайте накопленные баллы на товары и цифровые бонусы.</p>
+      </div>
+      <div class="shop-grid" id="shopGrid"></div>
+    </section>
+
+    <section id="page-profile" class="page panel" aria-labelledby="profileTitle">
+      <h2 id="profileTitle">Профиль</h2>
+      <form id="profileForm">
+        <div class="row">
+          <label for="userName">Имя</label>
+          <input id="userName" type="text" placeholder="Как к вам обращаться" />
+        </div>
+        <div class="row">
+          <label for="userId">ID</label>
+          <input id="userId" type="text" placeholder="Например, 100200" />
+        </div>
+        <div class="row">
+          <label for="userCity">Город</label>
+          <input id="userCity" type="text" placeholder="Например, Уфа" />
+        </div>
+        <div class="row">
+          <label for="themeSelect2">Тема</label>
+          <select id="themeSelect2">
+            <option value="default">Тёмная</option>
+            <option value="light">Светлая</option>
+            <option value="green">Зелёная</option>
+            <option value="purple">Фиолетовая</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Сохранить</button>
+        </div>
+      </form>
+    </section>
+
+    <footer>⚠️ Это учебный макет «фейкового» банка NeoBank. Денег здесь нет 🙂</footer>
+  </div>
+
+  <!-- ===== ОВЕРЛЕЙ: МАГАЗИН БАЛЛОВ ===== -->
+  <div id="shopModal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-dialog lg" role="dialog" aria-modal="true" aria-labelledby="shopModalTitle">
+      <div class="modal-header">
+        <div class="modal-title" id="shopModalTitle">Магазин баллов</div>
+        <button class="modal-close" data-close-shop>Закрыть</button>
+      </div>
+      <p style="color:var(--muted); margin: 0 0 12px">Обменивайте баллы на товары. Покупки списывают баллы напрямую.</p>
+      <div class="shop-grid" id="shopGridModal"></div>
+    </div>
+  </div>
+
+  <!-- ===== ОВЕРЛЕЙ: РЕГИСТРАЦИЯ ПРИ ПЕРВОМ ОТКРЫТИИ ===== -->
+  <div id="onboarding" class="modal-overlay" aria-hidden="true">
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
+      <div class="modal-header">
+        <div class="modal-title" id="onboardTitle">Регистрация</div>
+      </div>
+      <form id="onboardForm">
+        <div class="row">
+          <label for="fullName">ФИО</label>
+          <input id="fullName" type="text" placeholder="Иванов Иван Иванович" required />
+        </div>
+        <div class="row">
+          <label for="email">Email</label>
+          <input id="email" type="email" placeholder="name@example.com" required />
+        </div>
+        <div class="row">
+          <label for="phone">Телефон</label>
+          <input id="phone" type="tel" placeholder="+7 900 000-00-00" required />
+        </div>
+        <div class="row">
+          <label for="city">Город</label>
+          <input id="city" type="text" placeholder="Например, Москва" />
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Зарегистрироваться</button>
+        </div>
+        <p class="hint" style="color:var(--muted); margin:8px 0 0">После регистрации вы получите <b>ID</b> и <b>номер карты</b>.</p>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== ОВЕРЛЕЙ: ДЛЯ СТРАНИЦ (Pay/Points/Topup/History/Profile) ===== -->
+  <div id="pageOverlay" class="modal-overlay" aria-hidden="true">
+    <div class="modal-dialog" role="dialog" aria-modal="true" id="pageOverlayDialog">
+      <div class="modal-header">
+        <div class="modal-title" id="overlayTitle">Страница</div>
+        <button class="modal-close" id="overlayClose">Закрыть</button>
+      </div>
+      <div id="overlayBody"><!-- сюда перемещаем нужную .page --></div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="true"></div>
+
+  <script>
+    // ====== STATE ======
+    const STORAGE_KEY = 'neobank_state_v1';
+    const initialState = {
+      user: { name: '', id: '', city: '', email: '', phone: '' },
+      balance: 10000, // ₽
+      points: 500,    // баллы
+      theme: 'default',
+      validThru: '',
+      history: [ { type: 'Пополнение', amount: 10000, points: 0, date: new Date().toISOString() } ],
+      shop: [
+        { id: 's1', title: 'Premium стикеры', cost: 300, emoji: '✨' },
+        { id: 's2', title: '1 месяц Музыки', cost: 700, emoji: '🎧' },
+        { id: 's3', title: 'Кофе латте', cost: 120, emoji: '☕' },
+        { id: 's4', title: 'Игровой пропуск', cost: 900, emoji: '🎮' },
+        { id: 's5', title: '100 ГБ облака', cost: 600, emoji: '☁️' },
+        { id: 's6', title: 'Купон такси', cost: 450, emoji: '🚕' },
+        { id: 's7', title: 'Месяц Премиум', cost: 1200, emoji: '💎' },
+        { id: 's8', title: 'Кэшбэк-буст', cost: 800, emoji: '💥' },
+      ]
+    };
+
+    const loadState = () => {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || initialState; } catch { return initialState; }
+    };
+    const saveState = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+    let state = loadState();
+
+    // ====== HELPERS ======
+    const fmtMoney = (n) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(n);
+    const fmtDate = (iso) => new Intl.DateTimeFormat('ru-RU', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+
+    function toast(msg, type = 'ok') {
+      const t = document.createElement('div');
+      t.className = 'toast' + (type === 'warn' ? ' warn' : type === 'err' ? ' err' : '');
+      t.textContent = msg;
+      document.getElementById('toasts').appendChild(t);
+      setTimeout(() => { t.style.transition = 'opacity .3s ease'; t.style.opacity = '0'; setTimeout(() => t.remove(), 350); }, 2600);
+    }
+
+    function setTheme(name) {
+      document.body.classList.remove('theme-light', 'theme-green', 'theme-purple');
+      if (name === 'light') document.body.classList.add('theme-light');
+      if (name === 'green') document.body.classList.add('theme-green');
+      if (name === 'purple') document.body.classList.add('theme-purple');
+      state.theme = name; saveState();
+      const ts = document.getElementById('themeSelect'); if (ts) ts.value = name === 'default' ? 'default' : name;
+      const ts2 = document.getElementById('themeSelect2'); if (ts2) ts2.value = name === 'default' ? 'default' : name;
+    }
+
+    // ====== CARD UTILS ======
+    const computeCardNumberFromId = (id) => {
+      const clean = String(id).replace(/\D/g,'').padStart(6,'0').slice(-6);
+      // 5282  34** **  3456 — сохраняем фирменные края, середина от ID
+      return `5282  34${clean.slice(0,2)}  ${clean.slice(2,4)}${clean.slice(4,6)}  3456`;
+    };
+    const computeValidThru = () => {
+      const now = new Date(); const mm = String(now.getMonth()+1).padStart(2,'0'); const yy = String((now.getFullYear()+4)%100).padStart(2,'0');
+      return `${mm}/${yy}`;
+    };
+
+    // ====== RENDER ======
+    function renderSummary(){
+      document.getElementById('balanceView').textContent = fmtMoney(state.balance);
+      document.getElementById('pointsView').textContent = state.points;
+      const pv2 = document.getElementById('pointsView2'); if (pv2) pv2.textContent = state.points;
+      document.getElementById('cardOwner').textContent = state.user.name || 'Neo User';
+      const cn = state.user.id ? computeCardNumberFromId(state.user.id) : '5282  3421  9012  3456';
+      document.getElementById('cardNumber').textContent = cn;
+      const vt = state.validThru || computeValidThru();
+      document.getElementById('validThru').textContent = 'VALID THRU ' + vt;
+    }
+
+    function renderHistory(){
+      const tbody = document.getElementById('historyBody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      [...state.history].reverse().slice(0, 50).forEach(item => {
+        const tr = document.createElement('tr');
+        const sumSign = (item.type === 'Пополнение' || item.type === 'Обмен баллов→₽') ? '+' : (item.amount > 0 ? '-' : '');
+        tr.innerHTML = `<td>${fmtDate(item.date)}</td><td>${item.type}</td><td>${sumSign}${fmtMoney(Math.abs(item.amount))}</td><td>${item.points > 0 ? '+'+item.points : item.points}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderShop(){
+      const draw = (gridId) => {
+        const grid = document.getElementById(gridId);
+        if (!grid) return;
+        grid.innerHTML = '';
+        state.shop.forEach(prod => {
+          const el = document.createElement('div');
+          el.className = 'product';
+          el.innerHTML = `
+            <div class="thumb">${prod.emoji}</div>
+            <div class="title" style="font-weight:700">${prod.title}</div>
+            <div class="meta"><span style="color:var(--muted)">${prod.cost} баллов</span>
+              <button class="btn btn-primary" data-buy="${prod.id}">Получить</button>
+            </div>`;
+          grid.appendChild(el);
+        });
+      };
+      draw('shopGrid');
+      draw('shopGridModal');
+    }
+
+    function renderProfile(){
+      const name = document.getElementById('userName'); if (name) name.value = state.user.name || '';
+      const id = document.getElementById('userId'); if (id) id.value = state.user.id || '';
+      const city = document.getElementById('userCity'); if (city) city.value = state.user.city || '';
+      const theme2 = document.getElementById('themeSelect2'); if (theme2) theme2.value = state.theme || 'default';
+    }
+
+    // ====== ROUTER ======
+    const routes = ['pay','points','topup','history','shop','profile'];
+    function showPage(name){
+      routes.forEach(r => document.getElementById('page-'+r)?.classList.remove('active'));
+      const el = document.getElementById('page-'+name);
+      if (el) el.classList.add('active');
+      const firstInput = el ? el.querySelector('input') : null; if (firstInput) firstInput.focus();
+      renderSummary(); if(name==='history') renderHistory(); if(name==='shop') renderShop(); if(name==='profile') renderProfile();
+      window.location.hash = '#'+name;
+    }
+
+    // ====== ACTIONS ======
+    function addHistory(rec){ state.history.push(rec); saveState(); }
+
+    function pay(amount){
+      if (amount <= 0) return toast('Введите сумму больше нуля', 'warn');
+      if (amount > state.balance) return toast('Недостаточно средств', 'err');
+      state.balance -= amount;
+      const gained = Math.floor(amount * 0.05);
+      state.points += gained;
+      addHistory({ type: 'Оплата', amount, points: gained, date: new Date().toISOString() });
+      saveState(); renderSummary(); renderHistory();
+      toast('Оплата прошла'); if (gained>0) toast('Баллы начислены: +' + gained);
+    }
+
+    function topup(amount){
+      if (amount <= 0) return toast('Введите сумму больше нуля', 'warn');
+      state.balance += amount;
+      addHistory({ type: 'Пополнение', amount, points: 0, date: new Date().toISOString() });
+      saveState(); renderSummary(); renderHistory();
+      toast('Баланс пополнен');
+    }
+
+    function exchangePoints(p){
+      if (p <= 0) return toast('Введите корректное число баллов', 'warn');
+      if (p > state.points) return toast('Недостаточно баллов', 'err');
+      state.points -= p; state.balance += p;
+      addHistory({ type: 'Обмен баллов→₽', amount: p, points: -p, date: new Date().toISOString() });
+      saveState(); renderSummary(); renderHistory();
+      toast('Обмен выполнен');
+    }
+
+    function buyProduct(id){
+      const prod = state.shop.find(x => x.id === id); if (!prod) return;
+      if (state.points < prod.cost) return toast('Не хватает баллов', 'err');
+      state.points -= prod.cost;
+      addHistory({ type: `Магазин: ${prod.title}`, amount: 0, points: -prod.cost, date: new Date().toISOString() });
+      saveState(); renderSummary(); renderHistory();
+      toast(`Получено: ${prod.title}`);
+    }
+
+    // ====== SHOP MODAL ======
+    function openShop(){
+      renderShop();
+      document.getElementById('shopModal').classList.add('show');
+      document.getElementById('shopModal').setAttribute('aria-hidden','false');
+    }
+    function closeShop(){
+      document.getElementById('shopModal').classList.remove('show');
+      document.getElementById('shopModal').setAttribute('aria-hidden','true');
+    }
+
+    // ====== ONBOARDING ======
+    const needsOnboarding = () => !state.user || !state.user.email || !state.user.phone || !state.user.name;
+    const openOnboarding = () => {
+      const ob = document.getElementById('onboarding'); ob.classList.add('show'); ob.setAttribute('aria-hidden','false');
+      setTimeout(() => document.getElementById('fullName')?.focus(), 50);
+    };
+    const closeOnboarding = () => {
+      const ob = document.getElementById('onboarding'); ob.classList.remove('show'); ob.setAttribute('aria-hidden','true');
+    };
+
+    function generateUserId(){
+      const rnd = Math.floor(100000 + Math.random()*900000); // 6 цифр
+      return String(rnd);
+    }
+
+    // ====== PAGE OVERLAY (для Pay/Points/Topup/History/Profile) ======
+    const overlayRoutes = ['pay','points','topup','history','profile'];
+    const pageOverlay = document.getElementById('pageOverlay');
+    const overlayBody = document.getElementById('overlayBody');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlayClose = document.getElementById('overlayClose');
+    const originalParents = {}; // сохраняем родителя для каждой страницы
+    const originalActiveStates = {};
+
+    function openPageOverlay(route){
+      const pageId = 'page-' + route;
+      const pageEl = document.getElementById(pageId);
+      if (!pageEl) return;
+      // запомним родителя и active состояние один раз
+      if (!originalParents[pageId]) {
+        originalParents[pageId] = pageEl.parentElement;
+        originalActiveStates[pageId] = pageEl.classList.contains('active');
+      }
+      // очистим контейнер и поместим страницу внутрь оверлея (перемещение, не клонирование)
+      overlayBody.innerHTML = '';
+      overlayBody.appendChild(pageEl);
+      // пометить активной (для корректного отображения)
+      pageEl.classList.add('active');
+      pageOverlay.classList.add('show');
+      pageOverlay.setAttribute('aria-hidden','false');
+
+      // заголовок
+      const titles = { pay: 'Оплата', points: 'Баллы', topup: 'Пополнение', history: 'История транзакций', profile: 'Профиль' };
+      overlayTitle.textContent = titles[route] || '';
+
+      // фокус на первое поле
+      setTimeout(() => { const fi = pageEl.querySelector('input,button,select'); if (fi) fi.focus(); }, 40);
+
+      // если это Pay — привяжем генерацию QR (только один раз)
+      if (route === 'pay') attachPayQR(pageEl);
+      // если history — обновим данные
+      if (route === 'history') renderHistory();
+      if (route === 'shop') renderShop();
+    }
+
+    function closePageOverlay(){
+      // переместим всё из overlayBody обратно на прежние места
+      Array.from(overlayBody.children).forEach(child => {
+        const id = child.id;
+        if (originalParents[id]) {
+          // восстановим исходное состояние active
+          if (!originalActiveStates[id]) child.classList.remove('active');
+          originalParents[id].appendChild(child);
+        } else {
+          // на крайний случай вернём в app
+          document.getElementById('app').appendChild(child);
+        }
+      });
+      overlayBody.innerHTML = '';
+      pageOverlay.classList.remove('show');
+      pageOverlay.setAttribute('aria-hidden','true');
+    }
+
+    overlayClose.addEventListener('click', closePageOverlay);
+    pageOverlay.addEventListener('click', (e) => { if (e.target === pageOverlay) closePageOverlay(); });
+
+    // ====== EVENTS ======
+    // Навигация: магазин открываем как раньше, остальные — в оверлеях
+    document.querySelectorAll('[data-route]').forEach(el => el.addEventListener('click', () => {
+      const route = el.dataset.route;
+      if (route === 'shop') { openShop(); }
+      else if (overlayRoutes.includes(route)) { openPageOverlay(route); }
+      else { showPage(route); }
+    }));
+
+    // Покупки из обоих гридов + закрытие магазина
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-buy]');
+      if (btn) buyProduct(btn.dataset.buy);
+      if (e.target.matches('[data-close-shop]')) closeShop();
+    });
+
+    // Pay form (остаётся без изменений — обработчики работают на оригинальных элементах)
+    document.getElementById('payForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const v = Math.floor(Number(document.getElementById('payAmount').value));
+      pay(v); e.target.reset();
+    });
+
+    document.getElementById('topupForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const v = Math.floor(Number(document.getElementById('topupAmount').value));
+      topup(v); e.target.reset();
+    });
+
+    document.getElementById('exchangeForm').addEventListener('submit', e => {
+      e.preventDefault();
+      const v = Math.floor(Number(document.getElementById('exchangeAmount').value));
+      exchangePoints(v); e.target.reset();
+    });
+    document.getElementById('exchangeAll').addEventListener('click', () => { if (state.points > 0) exchangePoints(state.points); });
+
+    document.getElementById('profileForm').addEventListener('submit', e => {
+      e.preventDefault();
+      state.user.name = document.getElementById('userName').value || 'Neo User';
+      state.user.id = document.getElementById('userId').value || state.user.id || generateUserId();
+      state.user.city = document.getElementById('userCity').value || '';
+      setTheme(document.getElementById('themeSelect2').value || 'default');
+      saveState(); renderSummary();
+      toast('Профиль сохранён');
+    });
+
+    document.getElementById('themeSelect').addEventListener('change', e => setTheme(e.target.value));
+    document.getElementById('themeSelect2').addEventListener('change', e => setTheme(e.target.value));
+
+    // Онбординг сабмит
+    document.getElementById('onboardForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = document.getElementById('fullName').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const phone = document.getElementById('phone').value.trim();
+      const city = document.getElementById('city').value.trim();
+      if (!name || !email || !phone) { return toast('Заполните все обязательные поля', 'warn'); }
+      state.user.name = name; state.user.email = email; state.user.phone = phone; state.user.city = city;
+      state.user.id = generateUserId();
+      state.validThru = computeValidThru();
+      saveState(); renderSummary(); renderProfile();
+      closeOnboarding();
+      toast('Регистрация выполнена');
+      toast('Ваш ID: ' + state.user.id);
+      toast('Номер карты присвоен');
+    });
+
+    // Закрытие оверлеев по Esc/клику по фону
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        // закрываем магазин и/или pageOverlay
+        closeShop();
+        if (pageOverlay.classList.contains('show')) closePageOverlay();
+      }
+    });
+    document.getElementById('shopModal').addEventListener('click', (e) => { if (e.target.id === 'shopModal') closeShop(); });
+
+    // ====== QR в Pay: добавляем кнопку и canvas (привязано к оригинальной форме) ======
+    function attachPayQR(pageEl) {
+      // ожидаем, что это оригинальный элемент page-pay (перемещается, не клонируется)
+      const form = pageEl.querySelector('#payForm');
+      if (!form) return;
+      // если уже прикреплено — не дублируем
+      if (form.querySelector('.pay-qr-controls')) return;
+
+      const controls = document.createElement('div');
+      controls.className = 'pay-qr-controls';
+      controls.style.marginTop = '12px';
+
+      const btnQR = document.createElement('button');
+      btnQR.type = 'button';
+      btnQR.className = 'btn btn-ghost';
+      btnQR.textContent = 'Сгенерировать QR';
+
+      const canvas = document.createElement('canvas');
+      canvas.id = 'payQRCanvas';
+      canvas.width = 220;
+      canvas.height = 220;
+      canvas.style.display = 'none';
+      canvas.style.marginTop = '12px';
+      canvas.style.borderRadius = '8px';
+      canvas.style.background = 'white';
+
+      controls.appendChild(btnQR);
+      controls.appendChild(canvas);
+      form.appendChild(controls);
+
+      btnQR.addEventListener('click', () => {
+        const amount = form.querySelector('#payAmount').value || '0';
+        const qrValue = `NeoBank Payment;amount=${amount}`;
+        try {
+          // QRious рисует на canvas
+          new QRious({ element: canvas, value: qrValue, size: 220 });
+          canvas.style.display = 'block';
+        } catch (err) {
+          // fallback: показать текст
+          canvas.style.display = 'block';
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0,0,canvas.width,canvas.height);
+          ctx.fillStyle = '#000';
+          ctx.fillText(qrValue, 10, 20);
+        }
+      });
+    }
+
+    /* ======================= ДОБАВЛЕНО: JS для подсветки баланса при списании ======================= */
+    // NEW: функция короткой красной подсветки блока баланса; не затрагивает логику приложения
+    function flashBalanceDebit(){
+      const el = document.getElementById('balanceView');
+      if (!el) return;
+      el.classList.remove('balance-flash-red'); // сброс, чтобы анимация перезапустилась
+      void el.offsetWidth;                      // принудительный рефлоу
+      el.classList.add('balance-flash-red');    // запуск анимации на 1.2s
+    }
+
+    // NEW: обёртка над существующей pay(), чтобы добавить подсветку при успешном списании
+    (function(){
+      const originalPay = pay;
+      window.pay = function(amount){
+        const before = state.balance;
+        originalPay(amount);                    // вызываем оригинальную логику без изменений
+        if (amount > 0 && state.balance < before) {
+          flashBalanceDebit();                  // если баланс уменьшился — мигнём красным
+        }
+      };
+    })();
+    /* ======================= /ДОБАВЛЕНО ======================= */
+
+    // ====== INIT ======
+    (function init(){
+      // Миграция старых данных: если у пользователя уже были данные без email/phone, попросим зарегистрироваться (разово)
+      setTheme(state.theme || 'default');
+      renderSummary(); renderShop(); renderHistory(); renderProfile();
+      const initialRoute = (location.hash || '').replace('#','');
+      // Сохраним прежнее поведение: если в URL есть хеш — откроем страницу соответствующим образом
+      if (initialRoute && overlayRoutes.includes(initialRoute)) {
+        // если хеш указывает на один из overlayRoutes — откроем его как overlay
+        openPageOverlay(initialRoute);
+      } else if (initialRoute && routes.includes(initialRoute)) {
+        // иначе — покажем как раньше (inline)
+        showPage(initialRoute);
+      } else {
+        // по умолчанию: показать PAY как раньше (чтобы ничего не сломалось при обновлении страницы)
+        showPage('pay');
+      }
+
+      // Показать онбординг, если нет регистрационных данных
+      if (needsOnboarding()) openOnboarding();
+    })();
+  </script>
+</body>
+</html>
+```
