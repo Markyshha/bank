@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -23,7 +24,6 @@
     th, td { border:1px solid #ccc; padding:6px; text-align:left; font-size:14px; }
     .stat { padding:10px; border:1px solid #ddd; border-radius:8px; margin:6px 0; background:#fff; }
   </style>
-  <!-- Подключаем библиотеку для QR -->
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
 </head>
 <body>
@@ -110,9 +110,17 @@
     <section id="page-qr" class="page">
       <div class="card">
         <h2>QR Оплата</h2>
-        <div id="reader" style="width:300px; margin:auto;"></div>
-        <button type="button" onclick="startQR()">Сканировать QR</button>
-        <div id="qrResult" style="margin-top:10px; font-weight:600;"></div>
+        <div id="qrCameraBlock">
+          <div id="reader" style="width:300px; margin:auto;"></div>
+          <button type="button" onclick="startQR()">Сканировать QR</button>
+          <div id="qrResult" style="margin-top:10px; font-weight:600;"></div>
+        </div>
+        <div id="qrManualBlock" style="margin-top:20px;">
+          <form id="qrForm">
+            <input id="qrValue" placeholder="Вставьте QR-данные (например: чипсы_лэйс:alert:150)">
+            <button type="submit">Оплатить QR</button>
+          </form>
+        </div>
       </div>
     </section>
 
@@ -130,7 +138,6 @@
   </div>
 
   <script>
-    // ====== STATE ======
     var STORAGE_KEY = "neobank_lite_v3";
     var state = {
       user: { name:"", id:"", city:"", email:"", phone:"" },
@@ -228,7 +235,19 @@
       }
     }
 
-    // ====== EVENTS ======
+    function payQR(value){
+      if(!value){ msg("Введите данные QR"); return; }
+      var parts=value.split(":");
+      if(parts.length<3){ msg("Неверный формат QR"); return; }
+      var product=parts[0];
+      var price=parseInt(parts[2],10);
+      if(isNaN(price)||price<=0){ msg("Неверная цена"); return; }
+      if(price>state.balance){ msg("Недостаточно средств для QR оплаты"); return; }
+      state.balance-=price;
+      addHistory("QR Оплата — "+product,-price,0);
+      save(); render(); msg("QR оплата успешна: "+product+" за "+price+"₽");
+    }
+
     document.getElementById("registerForm").onsubmit=function(e){
       e.preventDefault();
       state.user.name=document.getElementById("fullName").value;
@@ -270,7 +289,13 @@
       save(); render(); msg("Профиль сохранён");
     };
 
-    // ====== INIT ======
+    document.getElementById("qrForm").onsubmit=function(e){
+      e.preventDefault();
+      var v=document.getElementById("qrValue").value.trim();
+      payQR(v);
+      this.reset();
+    };
+
     if(state.user && state.user.id){
       document.getElementById("mainNav").style.display="flex";
       msg("Добро пожаловать, "+state.user.name);
@@ -297,22 +322,17 @@
     function qrSuccess(decodedText, decodedResult){
       document.getElementById("qrResult").innerHTML = "QR: "+decodedText;
       qrScanner.stop();
-
-      var parts = decodedText.split(":");
-      if(parts.length<3){ msg("Неверный QR формат"); return; }
-      var product=parts[0];
-      var price=parseInt(parts[2],10);
-      if(isNaN(price)||price<=0){ msg("Неверная цена"); return; }
-      if(price>state.balance){ msg("Недостаточно средств для QR оплаты"); return; }
-
-      state.balance-=price;
-      addHistory("QR Оплата — "+product,-price,0);
-      save(); render(); msg("QR оплата успешна: "+product+" за "+price+"₽");
+      payQR(decodedText);
     }
 
     function qrError(errorMessage){
       console.log("QR error:", errorMessage);
     }
+
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      document.getElementById("qrCameraBlock").style.display="none";
+    }
   </script>
 </body>
 </html>
+```
