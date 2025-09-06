@@ -1,10 +1,9 @@
-```html
 <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>NeoBank Lite v3</title>
+  <title>NeoBank Lite v3+</title>
   <style>
     body { font-family: Arial, sans-serif; background:#f9f9f9; color:#000; margin:0; padding:0; }
     header { background:#fff; border-bottom:1px solid #ddd; padding:12px 16px; }
@@ -28,7 +27,7 @@
 </head>
 <body>
   <header>
-    <h1>NeoBank Lite</h1>
+    <h1>NeoBank Lite+</h1>
     <div>Баланс: <span id="balanceView">0</span> ₽ | Баллы: <span id="pointsView">0</span></div>
   </header>
 
@@ -41,7 +40,11 @@
     <button onclick="showPage('history')">История</button>
     <button onclick="showPage('shop')">Магазин</button>
     <button onclick="showPage('qr')">QR Оплата</button>
+    <button onclick="showPage('transfer')">Перевод</button>
     <button onclick="showPage('profile')">Профиль</button>
+    <button onclick="dailyBonus()">Бонус</button>
+    <button onclick="resetAccount()">Сброс</button>
+    <button onclick="exportHistory()">Экспорт</button>
   </nav>
 
   <div class="container">
@@ -124,6 +127,17 @@
       </div>
     </section>
 
+    <section id="page-transfer" class="page">
+      <div class="card">
+        <h2>Перевод</h2>
+        <form id="transferForm">
+          <input id="transferId" placeholder="ID получателя" required>
+          <input id="transferAmount" type="number" min="1" placeholder="Сумма ₽" required>
+          <button type="submit">Перевести</button>
+        </form>
+      </div>
+    </section>
+
     <section id="page-profile" class="page">
       <div class="card">
         <h2>Профиль</h2>
@@ -138,22 +152,20 @@
   </div>
 
   <script>
-    var STORAGE_KEY = "neobank_lite_v3";
+    var STORAGE_KEY = "neobank_lite_v3_plus";
     var state = {
       user: { name:"", id:"", city:"", email:"", phone:"" },
       balance: 1000,
       points: 200,
       history: [],
+      lastBonus: null,
       shop: [
         { id:"s1", title:"Стикеры", cost:100 },
         { id:"s2", title:"Кофе", cost:150 },
         { id:"s3", title:"Месяц музыки", cost:500 }
       ]
     };
-    try {
-      var saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-      if(saved) state = saved;
-    } catch(e){}
+    try { var saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); if(saved) state = saved; } catch(e){}
 
     function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
     function msg(t){ document.getElementById("message").innerHTML = t; }
@@ -228,8 +240,10 @@
         if(prod.id===id){
           if(state.points<prod.cost){ msg("Недостаточно баллов"); return; }
           state.points-=prod.cost;
-          addHistory("Покупка: "+prod.title,0,-prod.cost);
-          save(); render(); msg("Получено: "+prod.title);
+          var cashback=Math.floor(prod.cost*0.05);
+          state.points+=cashback;
+          addHistory("Покупка: "+prod.title,0,-prod.cost+cashback);
+          save(); render(); msg("Получено: "+prod.title+" (+"+cashback+" кэшбэк баллов)");
           return;
         }
       }
@@ -248,6 +262,42 @@
       save(); render(); msg("QR оплата успешна: "+product+" за "+price+"₽");
     }
 
+    // ✅ Новый функционал
+    function transfer(id,amount){
+      if(amount<=0){ msg("Введите сумму >0"); return; }
+      if(amount>state.balance){ msg("Недостаточно средств"); return; }
+      if(!id){ msg("Введите ID получателя"); return; }
+      state.balance-=amount;
+      addHistory("Перевод пользователю "+id,-amount,0);
+      save(); render(); msg("Переведено "+amount+"₽ пользователю "+id);
+    }
+
+    function dailyBonus(){
+      var today=new Date().toDateString();
+      if(state.lastBonus===today){ msg("Бонус уже получен сегодня"); return; }
+      state.lastBonus=today;
+      state.balance+=50; state.points+=10;
+      addHistory("Ежедневный бонус",50,10);
+      save(); render(); msg("Бонус получен: +50₽ и +10 баллов");
+    }
+
+    function resetAccount(){
+      if(confirm("Сбросить аккаунт?")){
+        localStorage.removeItem(STORAGE_KEY);
+        location.reload();
+      }
+    }
+
+    function exportHistory(){
+      var blob=new Blob([JSON.stringify(state.history,null,2)],{type:"application/json"});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement("a");
+      a.href=url; a.download="history.json"; a.click();
+      URL.revokeObjectURL(url);
+      msg("История экспортирована");
+    }
+
+    // ✅ Формы
     document.getElementById("registerForm").onsubmit=function(e){
       e.preventDefault();
       state.user.name=document.getElementById("fullName").value;
@@ -260,41 +310,12 @@
       showPage("pay");
     };
 
-    document.getElementById("payForm").onsubmit=function(e){
-      e.preventDefault();
-      var v=parseInt(document.getElementById("payAmount").value,10);
-      pay(v);
-      this.reset();
-    };
-
-    document.getElementById("topupForm").onsubmit=function(e){
-      e.preventDefault();
-      var v=parseInt(document.getElementById("topupAmount").value,10);
-      topup(v);
-      this.reset();
-    };
-
-    document.getElementById("exchangeForm").onsubmit=function(e){
-      e.preventDefault();
-      var v=parseInt(document.getElementById("exchangeAmount").value,10);
-      exchange(v);
-      this.reset();
-    };
-
-    document.getElementById("profileForm").onsubmit=function(e){
-      e.preventDefault();
-      state.user.name=document.getElementById("userName").value;
-      state.user.id=document.getElementById("userId").value||state.user.id;
-      state.user.city=document.getElementById("userCity").value;
-      save(); render(); msg("Профиль сохранён");
-    };
-
-    document.getElementById("qrForm").onsubmit=function(e){
-      e.preventDefault();
-      var v=document.getElementById("qrValue").value.trim();
-      payQR(v);
-      this.reset();
-    };
+    document.getElementById("payForm").onsubmit=function(e){ e.preventDefault(); pay(parseInt(document.getElementById("payAmount").value,10)); this.reset(); };
+    document.getElementById("topupForm").onsubmit=function(e){ e.preventDefault(); topup(parseInt(document.getElementById("topupAmount").value,10)); this.reset(); };
+    document.getElementById("exchangeForm").onsubmit=function(e){ e.preventDefault(); exchange(parseInt(document.getElementById("exchangeAmount").value,10)); this.reset(); };
+    document.getElementById("profileForm").onsubmit=function(e){ e.preventDefault(); state.user.name=document.getElementById("userName").value; state.user.id=document.getElementById("userId").value||state.user.id; state.user.city=document.getElementById("userCity").value; save(); render(); msg("Профиль сохранён"); };
+    document.getElementById("qrForm").onsubmit=function(e){ e.preventDefault(); payQR(document.getElementById("qrValue").value.trim()); this.reset(); };
+    document.getElementById("transferForm").onsubmit=function(e){ e.preventDefault(); transfer(document.getElementById("transferId").value,parseInt(document.getElementById("transferAmount").value,10)); this.reset(); };
 
     if(state.user && state.user.id){
       document.getElementById("mainNav").style.display="flex";
@@ -335,4 +356,3 @@
   </script>
 </body>
 </html>
-```
